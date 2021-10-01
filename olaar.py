@@ -1,24 +1,27 @@
-import argparse, boto3, os
+import argparse, boto3, datetime, getpass, os
 
-def assume_role(role: str, ext_id: str = None) -> dict:
+def assume_role(role: str, ext_id: str = None, acc_id: str = None) -> dict:
     """Performs STS role assumption API call for a provided ARN within the user context account"""
     sts = boto3.client('sts')
     res = {}
-    try:
-        print('[+] Retrieving Account ID')
-        res = sts.get_caller_identity()
-        account_id = res.get('Account', None)
-    except sts.exceptions.ClientError as err:
-        print(f'[x] {err}')
-        exit()
-
+    if not acc_id:
+        try:
+            print('[+] Retrieving Account ID')
+            res = sts.get_caller_identity()
+            acc_id = res.get('Account', None)
+            user_arn = res.get('Arn', '')
+            username = user_arn[1+user_arn.rfind('/')::]
+        except sts.exceptions.ClientError as err:
+            print(f'[x] {err}')
+            exit()
     try: # Assume role from STS API
-        arn = f'arn:aws:iam::{account_id}:role/{role}'
+        arn = f'arn:aws:iam::{acc_id}:role/{role}'
         print(f'[+] Executing role assumption for {arn}')
+        timestamp = datetime.date.today()
         if ext_id:
-            res = sts.assume_role(RoleArn=arn, RoleSessionName=f'{role}-Session', ExternalId=ext_id)
+            res = sts.assume_role(RoleArn=arn, RoleSessionName=f'{username}-{timestamp}', ExternalId=ext_id)
         else:
-            res = sts.assume_role(RoleArn=arn, RoleSessionName=f'{role}-Session')
+            res = sts.assume_role(RoleArn=arn, RoleSessionName=f'{username}-{timestamp}')
         print(f'[+] Received credentials from STS')
     
     except sts.exceptions.ClientError as err:
@@ -55,9 +58,11 @@ def revert_default_profile(profile: str) -> None:
 
     return None
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('olaar.py - OhitskiLabs AWS Assume Role script', usage='python3 olaar.py [assume|revert] [--role <role> [--external-id <id>] | --profile <name>]')
     parser.add_argument('--external-id',required=False,default=None,help='External Id required for role assumption')
+    parser.add_argument('--account-id',required=False,default=None,help='Account Id from which the role is within [defaults to current AWS profile account]')
     parser.add_argument('--role',required=False,default=None,help='Role to assume within the account')
     parser.add_argument('--profile',required=False,default=None,help='AWS profile to set as default')
     parser.add_argument('command',default=None,help='Command to run [assume|revert] (note: revert removes all aws_session_token entries')
@@ -67,7 +72,9 @@ if __name__ == '__main__':
     if (args.command == 'assume'):
         if not args.role:
             print(f'[x] Command \'assume\' requires a specified role arn (--role)')
-            parser.print_usage()
+            parser.print_usage()       
+        if (args.external_id == ''): # Prompt for external id if not specified
+            args.external_id = getpass.getpass('\tExternal-Id: ')
         creds = assume_role(args.role, args.external_id)
         configure_default_profile(creds)
     elif (args.command == 'revert'):
